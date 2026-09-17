@@ -99,13 +99,6 @@ modules/
 
 No cross-game imports. A fix in one game never breaks another.
 
-## Branches
-
-| Branch | Description |
-|--------|-------------|
-| main | Stable release |
-| Dev | Latest fixes and features |
-
 ## Credits
 
 **Authors:** Selene0623, Quiet Joker
