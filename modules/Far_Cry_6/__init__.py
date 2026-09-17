@@ -1,7 +1,12 @@
-"""Far Cry 6 — WIP placeholder package.
+"""Far Cry 6 / New Dawn module.
 
-No format scripts yet. This folder reserves the per-game structure so that
-when Far Cry 6 support is added it stays fully self-contained (its own
-import/export/skeleton/etc. scripts, no cross-game imports), per the
-one-folder-per-game architecture.
+Parser: import_xbg_fc6.py — reads FC6 XBG files (version 0x00130049).
+Format: HSEM chunk-based, same lineage as FC5 but with extra header field
+and evolved chunk content.  Chunk order:
+  LTMR → LEKS → EDON → MB2O → KSRP → DIKS → DNKS → ITOM → SDOL
+  → DHRM → ZNRM → XOBB → HPSB → FIKS → SDPD → [PMCP] → [PMCU]
+
+Operators: operators_fc6.py — import operator.
 """
+
+from . import operators_fc6

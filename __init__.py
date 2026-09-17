@@ -144,6 +144,7 @@ from .modules.Far_Cry_4.operators_fc4 import (XBG_OT_ImportFC4, XBG_OT_InjectFC4
                                         XBG_OT_ImportFC4Mab)
 from .modules.Far_Cry_5.operators_fc5 import (XBG_OT_ImportFC5, XBG_OT_ImportFC5Mab,
                                         XBG_OT_InjectFC5)
+from .modules.Far_Cry_6.operators_fc6 import XBG_OT_ImportFC6
 from .modules.Far_Cry_Primal.operators_primal import (XBG_OT_ImportPrimal,
                                         XBG_OT_InjectPrimal)
 from .modules.Watch_Dogs.operators_wd import (
@@ -320,6 +321,8 @@ classes = (
     XBG_OT_ImportFC5,
     XBG_OT_ImportFC5Mab,
     XBG_OT_InjectFC5,
+    # Far Cry 6 (parser ready, import pipeline WIP)
+    XBG_OT_ImportFC6,
     # Far Cry Primal (FC4-family GEOM, version 0x0006003A)
     XBG_OT_ImportPrimal,
     XBG_OT_InjectPrimal,
