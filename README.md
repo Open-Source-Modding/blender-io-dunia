@@ -48,7 +48,7 @@ original vertex count.
 
 ## Installation
 
-1. Download the release `.zip` from [Releases](../../releases).
+1. On the [GitHub repo page](../../), click **Code > Download ZIP**.
 2. Blender Edit > Preferences > Add-ons > Install, pick the zip, enable.
 3. Set data-folder paths in add-on preferences (powers texture auto-load).
 
