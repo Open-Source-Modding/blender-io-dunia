@@ -482,6 +482,106 @@ def _read_dnks_sulc(data, dnks_off):
     }
 
 
+def _read_dnks_clusters(data, dnks_off, dnks_size):
+    """Parse the DNKS cluster mesh data (after SULC sub-chunks).
+
+    In FC5/FC6 XBGs, DNKS contains:
+      1. SULC sub-chunk(s) — per-vertex palette indices (already parsed)
+      2. Cluster mesh data — per-material, per-mesh descriptors with optional
+         face-based bone groups (the "second"/"third" arrays used by vehicles)
+
+    This function parses section (2).  Each material has a meshcount, and each
+    mesh has a 12-byte header + 256 u16 "second" array + 262 u16 "third" array.
+
+    The "second" array is a list of group counts terminated by -1 (0xFFFF).
+    The "third" array contains groups of 8 u16s:
+        [+0] unk   [+1] unk   [+2] bone_id
+        [+3] unk   [+4] unk   [+5] unk
+        [+6] group_start (index count, /3 = face index)
+        [+7] group_length (index count, /3 = face count)
+
+    When a VB's Buffer_ID has bit 0x8000 set, weights come from these
+    face-based groups instead of per-vertex BONE_WTS data.
+    """
+    dnks_end = dnks_off + dnks_size
+
+    # Skip past SULC sub-chunks
+    p = dnks_off + 20
+    while p < dnks_end - 8:
+        fourcc = data[p:p+4]
+        if fourcc != b'SULC':
+            break
+        try:
+            ck_size = struct.unpack_from('<I', data, p + 8)[0]
+            p += 20 + ck_size  # header (20) + payload
+        except Exception:
+            break
+
+    materials = []
+    try:
+        n_mats = struct.unpack_from('<I', data, p)[0]
+        p += 4
+    except Exception:
+        return materials
+
+    for _ in range(n_mats):
+        if p + 4 > dnks_end:
+            break
+        meshcount = struct.unpack_from('<I', data, p)[0]
+        p += 4
+        mat_meshes = []
+        for _ in range(meshcount):
+            if p + 12 > dnks_end:
+                break
+            header = struct.unpack_from('<6H', data, p)
+            p += 12
+            order_idx, face_count, face_bytes, stride, vert_count, buffer_id = header
+
+            second_end = p + 256 * 2
+            if second_end > dnks_end:
+                break
+            second = struct.unpack_from('<256H', data, p)
+            p = second_end
+
+            third_end = p + 262 * 2
+            if third_end > dnks_end:
+                break
+            third = struct.unpack_from('<262H', data, p)
+            p = third_end
+
+            group_count = 0
+            for v in second:
+                if v == 0xFFFF:
+                    break
+                group_count += 1
+
+            groups = []
+            for g in range(group_count):
+                base = g * 8
+                if base + 8 > len(third):
+                    break
+                bone_id = third[base + 2]
+                face_start_idx = third[base + 6]
+                face_length_idx = third[base + 7]
+                groups.append({
+                    'bone_id': bone_id,
+                    'face_start': face_start_idx // 3,
+                    'face_count': face_length_idx // 3,
+                })
+
+            mat_meshes.append({
+                'buffID': buffer_id,
+                'stride': stride,
+                'vCount': vert_count,
+                'faceCount': face_count,
+                'faceBytes': face_bytes,
+                'groups': groups,
+            })
+        materials.append(mat_meshes)
+
+    return materials
+
+
 def _extract_sulc_palettes(data, skinning, n_bones):
     """Extract every per-cluster bone palette from the SULC payload.
 

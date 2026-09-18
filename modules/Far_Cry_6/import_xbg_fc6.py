@@ -43,6 +43,65 @@ def detect_fc6(data):
             and struct.unpack_from('<I', data, 4)[0] == VERSION_FC6)
 
 
+def _read_lod_fc6(s):
+    """Parse one LOD from the FC6 SDOL chunk.
+
+    FC6 VB descriptor: flag(u32) + vertsize(u32) + buffsize(u32) + offset(u32)
+    Unlike FC5 which stores (flag, stride, vcount, offset), FC6 stores
+    (flag, vertsize, buffsize, offset) where vertsize = total vertex bytes.
+    Stride is inferred by trying common divisors of vertsize.
+    """
+    lod_dist = s.f32()
+    vbc = s.u32()
+    vbs = []
+    for _ in range(vbc):
+        flag = s.u32()
+        vertsize = s.u32()
+        buffsize = s.u32()
+        offset = s.u32()
+
+        # Infer stride from vertsize by trying common divisors
+        stride = 0
+        for st in (6, 8, 12, 16, 20, 24, 28, 32, 36, 40):
+            if vertsize > 0 and vertsize % st == 0 and 10 <= vertsize // st <= 200000:
+                stride = st
+                break
+        vcount = vertsize // stride if stride > 0 else 0
+
+        vbs.append({
+            'flag': flag, 'stride': stride, 'vcount': vcount,
+            'verts': [], 'faces': [], 'sections': [],
+        })
+
+    # Skip entry table (FC6 has 0 entries)
+    n_entries = s.u32()
+    s.p += n_entries * 28
+    s.u32()  # vb_size
+    s.align(16)
+
+    # Read vertex data
+    for vb in vbs:
+        for _ in range(vb['vcount']):
+            v = _fc5._read_vertex(s, vb['stride'], vb['flag'])
+            if v is not None:
+                vb['verts'].append(v)
+
+    # Index buffer
+    total_idx = s.u32()
+    s.align(16)
+    if total_idx > 0 and s.p + total_idx * 2 <= len(s.d):
+        all_indices = struct.unpack_from(f'<{total_idx}H', s.d, s.p)
+        s.p += total_idx * 2
+
+        # Build faces from index buffer
+        for i in range(0, len(all_indices) - 2, 3):
+            a, b, c = all_indices[i], all_indices[i+1], all_indices[i+2]
+            if a < vbs[0]['vcount'] and b < vbs[0]['vcount'] and c < vbs[0]['vcount']:
+                vbs[0]['faces'].append((a, b, c))
+
+    return {'dist': lod_dist, 'vbc': vbc, 'vbs': vbs}
+
+
 def parse_fc6(path_or_bytes):
     """Parse an FC6 .xbg file.
 
@@ -103,17 +162,13 @@ def parse_fc6(path_or_bytes):
             skinning = _fc5._read_dnks_sulc(data, coff)
             clusters = _fc5._read_dnks_clusters(data, coff, csize)
         elif name == 'SDOL':
-            # FC6 SDOL format = FC2-FC5 (Noesis/FC4 Blender confirmed):
-            # lod_count(u32) → per LOD: dist(f32) + vbc(u32) + VB descriptors + ...
-            # Use _read_lod (FC3/FC4) which starts at lod_dist, not _read_lod_fc5
-            # which expects an extra u32 before lod_dist.
             try:
                 n_lods = struct.unpack_from('<I', data, coff + 20)[0]
                 s2 = _fc5._Stream(data)
-                s2.setpos(coff + 28)  # skip chunk header(20) + n_lods(4) + unk(4)
+                s2.setpos(coff + 28)
                 for _ in range(n_lods):
                     try:
-                        lods.append(_fc5._read_lod(s2))
+                        lods.append(_read_lod_fc6(s2))
                     except Exception:
                         break
             except Exception:
