@@ -197,10 +197,15 @@ def _read_node_data(data, pos, class_type):
     return pos, params
 
 
-def _parse_tree_nodes(data, pos, depth=0, max_depth=50, visited=None, max_nodes=100000):
-    """Parse animation tree nodes from binary data."""
+def _parse_tree_nodes(data, pos, depth=0, max_depth=50, visited=None, max_nodes=100000, tree_start=None):
+    """Parse animation tree nodes from binary data.
+
+    Child offsets are u16 word offsets (×4 for bytes) from tree_start.
+    """
     if visited is None:
         visited = set()
+    if tree_start is None:
+        tree_start = pos
 
     nodes = []
     if depth > max_depth or pos >= len(data) or pos in visited or len(nodes) >= max_nodes:
@@ -218,12 +223,12 @@ def _parse_tree_nodes(data, pos, depth=0, max_depth=50, visited=None, max_nodes=
         node.header_a = params.get('header_a', 0)
         node.header_b = params.get('header_b', 0)
 
-        # Read children recursively
+        # Read children recursively (offsets are from tree_start)
         child_offsets = params.get('child_offsets', [])
         for offset_val in child_offsets:
-            child_pos = offset_val * 4
+            child_pos = tree_start + offset_val * 4
             if child_pos < len(data) and child_pos not in visited:
-                children = _parse_tree_nodes(data, child_pos, depth + 1, max_depth, visited, max_nodes)
+                children = _parse_tree_nodes(data, child_pos, depth + 1, max_depth, visited, max_nodes, tree_start)
                 node.children.extend(children)
 
         nodes.append(node)
@@ -240,7 +245,9 @@ def _parse_combined_move(data):
 
     Format: u32 ver + u32 moveDataSize + u32 fcbDataSize + moveData + fcbData
     The moveData has: u64 filename_hash + tree nodes
-    Tree child offsets are relative to moveData start (after filename hash).
+    Tree child offsets are u16 word offsets (×4 for bytes) from stream start.
+
+    Source: MabTools/CombinedMoveFile.cs CombinedMoveFileConvertBin()
     """
     if len(data) < 12:
         return None
@@ -263,13 +270,59 @@ def _parse_combined_move(data):
     # Extract move data (animation trees)
     move_data = data[12:12 + move_data_size]
 
-    # Tree starts after 8-byte filename hash
-    # Child offsets are relative to move_data start (after filename hash)
+    # Parse all move trees from move data
+    # Each tree starts with u64 filename_hash
     if move_data and len(move_data) > 8:
-        tree_data = move_data[8:]  # skip filename hash
-        result.nodes = _parse_tree_nodes(tree_data, 0)
+        result.nodes = _parse_all_trees(move_data)
 
     return result
+
+
+def _parse_all_trees(move_data):
+    """Parse all animation trees from move_data.
+
+    move_data contains: u64 filename_hash + tree nodes for each resource.
+    PerMoveResourceInfo from fcbData tells us where each tree starts/ends,
+    but we can also scan for valid classNameType sequences.
+    """
+    nodes = []
+    pos = 0
+    visited = set()
+    max_trees = 100  # safety limit
+
+    tree_count = 0
+    while pos + 8 < len(move_data) and tree_count < max_trees:
+        # Each tree starts with u64 filename_hash
+        filename_hash = struct.unpack_from('<Q', move_data, pos)[0]
+        pos += 8
+
+        # Check if next byte is a valid classNameType
+        if pos >= len(move_data):
+            break
+        class_type = struct.unpack_from('<b', move_data, pos)[0]
+        if class_type < 7 or class_type > 47:
+            # Not a valid tree start — skip ahead
+            # Maybe this is padding or a different structure
+            pos += 1
+            continue
+
+        # Found a valid tree start
+        tree_start = pos - 8  # include the filename hash
+        if tree_start in visited:
+            break
+        visited.add(tree_start)
+
+        # Parse the tree
+        tree_nodes = _parse_tree_nodes(move_data, pos, visited=visited, max_nodes=50000)
+        if tree_nodes:
+            nodes.extend(tree_nodes)
+            tree_count += 1
+            # Advance past the parsed nodes
+            # (the last node's end position should tell us where we are)
+            # For now, scan forward for the next valid tree start
+            pos = pos + 1  # move past current position
+
+    return nodes
 
 
 def _parse_movedef(data):
