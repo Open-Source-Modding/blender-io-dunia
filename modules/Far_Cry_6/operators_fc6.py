@@ -93,21 +93,23 @@ def import_fc6_model(context, filepath, import_lod='0', mesh_scale=1.0):
         vert_offset = 0
 
         for vb in vbs:
-            flag = vb['flags']
+            flag = vb['flag']
             stride = vb['stride']
-            vcount = vb['vcount']
+            verts = vb.get('verts', [])
+            vb_faces = vb.get('faces', [])
 
-            vlog.log(f"    VB: flags=0x{flag:04x} stride={stride} vcount={vcount}")
+            vlog.log(f"    VB: flags=0x{flag:04x} stride={stride} vcount={len(verts)} faces={len(vb_faces)}")
 
-            # Parse vertex data from the file
-            # For now, use placeholder data — real vertex reading needs
-            # the vertex data offset from the SDOL
-            for vi in range(vcount):
-                positions.append((0, 0, 0))
-                uvs.append((0, 0))
-                normals.append((0, 0, 1))
+            for v in verts:
+                positions.append(v['p'])
+                uvs.append(v.get('uv', (0, 0)))
+                normals.append(v.get('n', (0, 0, 1)))
 
-            vert_offset += vcount
+            # Offset face indices to be global across VBs
+            for a, b, c in vb_faces:
+                faces.append((a + vert_offset, b + vert_offset, c + vert_offset))
+
+            vert_offset += len(verts)
 
         if not positions:
             vlog.log("  No vertices")
