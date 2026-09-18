@@ -165,7 +165,7 @@ def parse_fc6(path_or_bytes):
             try:
                 n_lods = struct.unpack_from('<I', data, coff + 20)[0]
                 s2 = _fc5._Stream(data)
-                s2.setpos(coff + 28)
+                s2.setpos(coff + 20)  # payload start = lod_count
                 for _ in range(n_lods):
                     try:
                         lods.append(_read_lod_fc6(s2))
