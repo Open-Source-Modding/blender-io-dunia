@@ -163,12 +163,42 @@ def parse_fc6(path_or_bytes):
             clusters = _fc5._read_dnks_clusters(data, coff, csize)
         elif name == 'SDOL':
             try:
-                n_lods = struct.unpack_from('<I', data, coff + 20)[0]
+                pay_start = coff + 20
+                n_lods = struct.unpack_from('<I', data, pay_start)[0]
+                # FC6 sub-header: lod_count(4) + unk(4) + unk(4) + lod_dist(f32) + vbc(u32) + unk(u32)
+                # VB descriptor starts at pay+16: flag(u32), vertsize(u32), buffsize(u32), offset(u32)
+                lod_dist = struct.unpack_from('<f', data, pay_start + 8)[0]
+                vbc = struct.unpack_from('<I', data, pay_start + 12)[0]
                 s2 = _fc5._Stream(data)
-                s2.setpos(coff + 20)  # payload start = lod_count
-                for _ in range(n_lods):
+                s2.setpos(pay_start + 16)  # VB descriptor start
+                for _ in range(vbc):
                     try:
-                        lods.append(_read_lod_fc6(s2))
+                        flag = s2.u32()
+                        vertsize = s2.u32()
+                        buffsize = s2.u32()
+                        offset = s2.u32()
+                        stride = 0
+                        for st in (6, 8, 12, 16, 20, 24, 28, 32, 36, 40):
+                            if vertsize > 0 and vertsize % st == 0 and 10 <= vertsize // st <= 200000:
+                                stride = st
+                                break
+                        vcount = vertsize // stride if stride > 0 else 0
+                        vb = {'flag': flag, 'stride': stride, 'vcount': vcount,
+                              'verts': [], 'faces': [], 'sections': []}
+                        # Read vertex data from SDOL payload
+                        vd_start = pay_start + offset
+                        if stride > 0 and vd_start + vertsize <= len(data):
+                            # FC6 flag=0x0000: infer format from stride
+                            # stride=6: 3×i16 position (quantized)
+                            # stride=8: 4×i16 (xyz + w/pad)
+                            for vi in range(vcount):
+                                off = vd_start + vi * stride
+                                if stride >= 6:
+                                    vx = struct.unpack_from('<h', data, off)[0] / 16383.5
+                                    vy = struct.unpack_from('<h', data, off+2)[0] / 16383.5
+                                    vz = struct.unpack_from('<h', data, off+4)[0] / 16383.5
+                                    vb['verts'].append((vx, vy, vz))
+                        lods.append({'dist': lod_dist, 'vbc': vbc, 'vbs': [vb]})
                     except Exception:
                         break
             except Exception:
