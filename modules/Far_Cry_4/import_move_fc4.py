@@ -105,36 +105,28 @@ class MoveFile:
 
 
 def _read_node_data(data, pos, class_type):
-    """Read node-specific data based on classNameType.
+    """Read node data matching MabTools ChildDeserialize flow.
 
-    Different class types have different binary layouts.
-    Returns (new_pos, params_dict).
-
+    Order: classNameType(1) → header(3) → type-specific data → child offsets → padding
     Source: MabTools/CombinedMoveFile.cs ChildDeserialize()
     """
     params = {}
 
     if class_type in (10, 11):
-        # ComparisonOpe / IntervalOpe: single byte value
         if pos < len(data):
             params['header_value'] = struct.unpack_from('<B', data, pos)[0]
             pos += 1
         return pos, params
 
-    # Standard header: children_count(1) + headerA(1) + headerB(1) + extra(4)
-    if pos + 7 > len(data):
+    # Standard header: childrenCount(1) + unknownA(1) + unknownB(1)
+    if pos + 3 > len(data):
         return pos, params
 
-    children_count = struct.unpack_from('<B', data, pos)[0]
-    pos += 1
-    header_a = struct.unpack_from('<B', data, pos)[0]
-    pos += 1
-    header_b = struct.unpack_from('<B', data, pos)[0]
-    pos += 1
-    extra = struct.unpack_from('<I', data, pos)[0]
-    pos += 4
+    children_count = struct.unpack_from('<B', data, pos)[0]; pos += 1
+    header_a = struct.unpack_from('<B', data, pos)[0]; pos += 1
+    header_b = struct.unpack_from('<B', data, pos)[0]; pos += 1
 
-    # For blend/layer types, children_count and headerA are swapped
+    # For blend/layer types, swap children_count and headerA
     if class_type in (12, 13, 14, 44):
         children_count, header_a = header_a, children_count
 
@@ -142,59 +134,35 @@ def _read_node_data(data, pos, class_type):
     params['header_a'] = header_a
     params['header_b'] = header_b
 
-    # Read child offsets (u16 each)
+    # Type-specific data (read BEFORE child offsets)
+    if class_type in (16, 17, 18, 19):
+        if pos + 8 <= len(data):
+            params['anim_id'] = struct.unpack_from('<I', data, pos)[0]; pos += 4
+            params['anim_param'] = struct.unpack_from('<I', data, pos)[0]; pos += 4
+    elif class_type == 21:
+        if pos + 8 <= len(data): pos += 8
+    elif class_type == 22:
+        if pos + 4 <= len(data): pos += 4
+    elif class_type in (30, 31, 32, 34):
+        if pos + 4 <= len(data):
+            params['blend_param'] = struct.unpack_from('<I', data, pos)[0]; pos += 4
+    elif class_type == 43:
+        if pos + 4 <= len(data):
+            params['transition_param'] = struct.unpack_from('<I', data, pos)[0]; pos += 4
+
+    # Child offsets (read AFTER type-specific data)
     child_offsets = []
     for _ in range(children_count):
-        if pos + 2 > len(data):
-            break
-        offset_val = struct.unpack_from('<H', data, pos)[0]
-        pos += 2
+        if pos + 2 > len(data): break
+        offset_val = struct.unpack_from('<H', data, pos)[0]; pos += 2
         if offset_val != 0:
             child_offsets.append(offset_val)
     params['child_offsets'] = child_offsets
 
-    # Padding to 4-byte alignment
-    padding = (4 - (children_count % 4)) % 4
+    # Padding
+    endSpace = 2 if class_type in (7, 8, 9) else 0
+    padding = (4 - ((children_count - endSpace) % 4)) % 4
     pos += padding * 2
-
-    # Node-specific data after header
-    if class_type in (16, 17, 18, 19):
-        # Animation nodes: u32 animId + u32 animParam
-        if pos + 8 <= len(data):
-            params['anim_id'] = struct.unpack_from('<I', data, pos)[0]
-            pos += 4
-            params['anim_param'] = struct.unpack_from('<I', data, pos)[0]
-            pos += 4
-    elif class_type == 12:
-        # BlendRef: no extra data (children already read)
-        pass
-    elif class_type == 13:
-        # MultiBlendRef: no extra data
-        pass
-    elif class_type == 14:
-        # SuspendLayer: no extra data
-        pass
-    elif class_type == 15:
-        # StateRef: no extra data
-        pass
-    elif class_type == 21:
-        # MotionMatching: u32 + u32 + data
-        if pos + 8 <= len(data):
-            pos += 8
-    elif class_type == 22:
-        # MotionMatchingList: u32 count + data
-        if pos + 4 <= len(data):
-            pos += 4
-    elif class_type in (30, 31, 32, 34):
-        # RangeBlend/AxialBlend/MultiBlend: u32 blendParam
-        if pos + 4 <= len(data):
-            params['blend_param'] = struct.unpack_from('<I', data, pos)[0]
-            pos += 4
-    elif class_type == 43:
-        # Transition: u32 transitionParam
-        if pos + 4 <= len(data):
-            params['transition_param'] = struct.unpack_from('<I', data, pos)[0]
-            pos += 4
 
     return pos, params
 
@@ -228,13 +196,14 @@ def _parse_tree_nodes(data, pos, depth=0, max_depth=50, visited=None, max_nodes=
         node.header_a = params.get('header_a', 0)
         node.header_b = params.get('header_b', 0)
 
-        # Read children recursively (offsets are indices into offsets_array)
+        # Read children recursively
+        # Brute-forced: child offsets × 8 + base 16 (from move_data[0])
         child_offsets = params.get('child_offsets', [])
         for offset_val in child_offsets:
             if offsets_array and offset_val < len(offsets_array):
                 child_pos = offsets_array[offset_val]
             else:
-                child_pos = tree_start + offset_val * 4
+                child_pos = 16 + offset_val * 8  # brute-forced: base=16, mult=8
             if child_pos < len(data) and child_pos not in visited and child_pos < end_pos:
                 children = _parse_tree_nodes(data, child_pos, depth + 1, max_depth, visited, max_nodes, tree_start, tree_size, offsets_array)
                 node.children.extend(children)
