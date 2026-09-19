@@ -197,23 +197,26 @@ def _read_node_data(data, pos, class_type):
     return pos, params
 
 
-def _parse_tree_nodes(data, pos, depth=0, max_depth=50, visited=None, max_nodes=100000, tree_start=None):
+def _parse_tree_nodes(data, pos, depth=0, max_depth=50, visited=None, max_nodes=100000, tree_start=None, tree_size=None):
     """Parse animation tree nodes from binary data.
 
     Child offsets are u16 word offsets (×4 for bytes) from tree_start.
+    tree_size limits how many bytes to read from pos.
     """
     if visited is None:
         visited = set()
     if tree_start is None:
         tree_start = pos
 
+    end_pos = pos + tree_size if tree_size else len(data)
+
     nodes = []
-    if depth > max_depth or pos >= len(data) or pos in visited or len(nodes) >= max_nodes:
+    if depth > max_depth or pos >= len(data) or pos >= end_pos or pos in visited or len(nodes) >= max_nodes:
         return nodes
 
     visited.add(pos)
 
-    while pos < len(data):
+    while pos < end_pos:
         class_type = struct.unpack_from('<b', data, pos)[0]
         pos += 1
 
@@ -227,8 +230,8 @@ def _parse_tree_nodes(data, pos, depth=0, max_depth=50, visited=None, max_nodes=
         child_offsets = params.get('child_offsets', [])
         for offset_val in child_offsets:
             child_pos = tree_start + offset_val * 4
-            if child_pos < len(data) and child_pos not in visited:
-                children = _parse_tree_nodes(data, child_pos, depth + 1, max_depth, visited, max_nodes, tree_start)
+            if child_pos < len(data) and child_pos not in visited and child_pos < end_pos:
+                children = _parse_tree_nodes(data, child_pos, depth + 1, max_depth, visited, max_nodes, tree_start, tree_size)
                 node.children.extend(children)
 
         nodes.append(node)
@@ -240,14 +243,11 @@ def _parse_tree_nodes(data, pos, depth=0, max_depth=50, visited=None, max_nodes=
     return nodes
 
 
-def _parse_combined_move(data):
+def _parse_combined_move(data, sizes=None):
     """Parse combinedmovefile.bin format.
 
     Format: u32 ver + u32 moveDataSize + u32 fcbDataSize + moveData + fcbData
-    The moveData has: u64 filename_hash + tree nodes
-    Tree child offsets are u16 word offsets (×4 for bytes) from stream start.
-
-    Source: MabTools/CombinedMoveFile.cs CombinedMoveFileConvertBin()
+    Tree sizes from PerMoveResourceInfo (FCBastard XML: sizes="[#...]").
     """
     if len(data) < 12:
         return None
@@ -267,15 +267,35 @@ def _parse_combined_move(data):
     else:
         result.game = f"Unknown (0x{result.version:08x})"
 
-    # Extract move data (animation trees)
     move_data = data[12:12 + move_data_size]
 
-    # Parse all move trees from move data
-    # Each tree starts with u64 filename_hash
     if move_data and len(move_data) > 8:
-        result.nodes = _parse_all_trees(move_data)
+        if sizes and len(sizes) > 0:
+            result.nodes = _parse_trees_with_sizes(move_data, sizes)
+        else:
+            result.nodes = _parse_all_trees(move_data)
 
     return result
+
+
+def _parse_trees_with_sizes(move_data, sizes):
+    """Parse trees using PerMoveResourceInfo sizes for correct positioning."""
+    nodes = []
+    pos = 0
+    for i, size in enumerate(sizes):
+        if pos + size > len(move_data) or len(nodes) > 200:
+            break
+        tree_nodes = _parse_tree_nodes(move_data, pos, max_depth=10, max_nodes=50,
+                                        tree_start=pos, tree_size=size, visited=set())
+        if tree_nodes:
+            root = tree_nodes[0] if tree_nodes else None
+            if root:
+                root.params['tree_index'] = i
+                root.params['tree_size'] = size
+                root.params['tree_offset'] = pos
+            nodes.extend(tree_nodes)
+        pos += size
+    return nodes
 
 
 def _parse_all_trees(move_data):

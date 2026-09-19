@@ -16,8 +16,13 @@ from ..Far_Cry_4.import_move_fc4 import (
 )
 
 
-def parse_move_file(path_or_bytes):
-    """Parse a .move.bin file (FC5/ND/FC6)."""
+def parse_move_file(path_or_bytes, sizes=None):
+    """Parse a .move.bin file (FC5/ND/FC6).
+
+    Args:
+        path_or_bytes: file path or raw bytes
+        sizes: optional list of tree sizes from PerMoveResourceInfo
+    """
     if isinstance(path_or_bytes, str):
         with open(path_or_bytes, 'rb') as f:
             data = f.read()
@@ -31,6 +36,6 @@ def parse_move_file(path_or_bytes):
 
     first_u32 = struct.unpack_from('<I', data, 0)[0]
     if first_u32 in (VER_FC5, VER_ND, VER_FC6):
-        return _parse_combined_move(data)
+        return _parse_combined_move(data, sizes)
     else:
         return _parse_movedef(data)
