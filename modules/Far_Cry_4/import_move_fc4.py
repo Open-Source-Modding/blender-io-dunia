@@ -197,13 +197,14 @@ def _parse_tree_nodes(data, pos, depth=0, max_depth=50, visited=None, max_nodes=
         node.header_b = params.get('header_b', 0)
 
         # Read children recursively
-        # Brute-forced: child offsets × 8 + base 16 (from move_data[0])
+        # Child offsets are direct byte positions in the file
+        # (MabTools uses ×4 but it produces invalid positions for combinedmovefile.bin)
         child_offsets = params.get('child_offsets', [])
         for offset_val in child_offsets:
             if offsets_array and offset_val < len(offsets_array):
                 child_pos = offsets_array[offset_val]
             else:
-                child_pos = 16 + offset_val * 8  # brute-forced: base=16, mult=8
+                child_pos = offset_val  # direct file byte position
             if child_pos < len(data) and child_pos not in visited and child_pos < end_pos:
                 children = _parse_tree_nodes(data, child_pos, depth + 1, max_depth, visited, max_nodes, tree_start, tree_size, offsets_array)
                 node.children.extend(children)
