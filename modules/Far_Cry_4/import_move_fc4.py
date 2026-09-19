@@ -121,8 +121,8 @@ def _read_node_data(data, pos, class_type):
             pos += 1
         return pos, params
 
-    # Standard header: children_count, headerA, headerB
-    if pos + 3 > len(data):
+    # Standard header: children_count(1) + headerA(1) + headerB(1) + extra(4)
+    if pos + 7 > len(data):
         return pos, params
 
     children_count = struct.unpack_from('<B', data, pos)[0]
@@ -131,6 +131,8 @@ def _read_node_data(data, pos, class_type):
     pos += 1
     header_b = struct.unpack_from('<B', data, pos)[0]
     pos += 1
+    extra = struct.unpack_from('<I', data, pos)[0]
+    pos += 4
 
     # For blend/layer types, children_count and headerA are swapped
     if class_type in (12, 13, 14, 44):
@@ -285,15 +287,19 @@ def _parse_trees_with_sizes(move_data, sizes):
     for i, size in enumerate(sizes):
         if pos + size > len(move_data) or len(nodes) > 200:
             break
-        tree_nodes = _parse_tree_nodes(move_data, pos, max_depth=10, max_nodes=50,
-                                        tree_start=pos, tree_size=size, visited=set())
-        if tree_nodes:
-            root = tree_nodes[0] if tree_nodes else None
-            if root:
-                root.params['tree_index'] = i
-                root.params['tree_size'] = size
-                root.params['tree_offset'] = pos
-            nodes.extend(tree_nodes)
+        # Skip 8-byte filename hash, tree data starts at pos+8
+        tree_data_start = pos + 8
+        tree_data_size = size - 8
+        if tree_data_size > 0:
+            tree_nodes = _parse_tree_nodes(move_data, tree_data_start, max_depth=10, max_nodes=50,
+                                            tree_start=tree_data_start, tree_size=tree_data_size, visited=set())
+            if tree_nodes:
+                root = tree_nodes[0] if tree_nodes else None
+                if root:
+                    root.params['tree_index'] = i
+                    root.params['tree_size'] = size
+                    root.params['tree_offset'] = pos
+                nodes.extend(tree_nodes)
         pos += size
     return nodes
 
