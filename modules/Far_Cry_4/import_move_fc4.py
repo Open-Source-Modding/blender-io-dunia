@@ -197,14 +197,10 @@ def _parse_tree_nodes(data, pos, depth=0, max_depth=50, visited=None, max_nodes=
         node.header_b = params.get('header_b', 0)
 
         # Read children recursively
-        # Child offsets are direct byte positions in the file
-        # (MabTools uses ×4 but it produces invalid positions for combinedmovefile.bin)
+        # Child offsets × 4 = byte positions in fcbData section
         child_offsets = params.get('child_offsets', [])
         for offset_val in child_offsets:
-            if offsets_array and offset_val < len(offsets_array):
-                child_pos = offsets_array[offset_val]
-            else:
-                child_pos = offset_val  # direct file byte position
+            child_pos = offset_val * 4  # byte position in fcbData
             if child_pos < len(data) and child_pos not in visited and child_pos < end_pos:
                 children = _parse_tree_nodes(data, child_pos, depth + 1, max_depth, visited, max_nodes, tree_start, tree_size, offsets_array)
                 node.children.extend(children)
@@ -218,12 +214,12 @@ def _parse_tree_nodes(data, pos, depth=0, max_depth=50, visited=None, max_nodes=
     return nodes
 
 
-def _parse_combined_move(data, sizes=None, offsets_array=None):
+def _parse_combined_move(data, sizes=None, offsets_array=None, resource_path_table=None):
     """Parse combinedmovefile.bin format.
 
     Format: u32 ver + u32 moveDataSize + u32 fcbDataSize + moveData + fcbData
     Tree sizes from PerMoveResourceInfo (FCBastard XML: sizes="[#...]").
-    Child offsets are indices into offsets_array (FCBastard XML: offsetsArray="[#...]")
+    Child offsets × 4 = byte positions in fcbData section.
     """
     if len(data) < 12:
         return None
@@ -247,20 +243,21 @@ def _parse_combined_move(data, sizes=None, offsets_array=None):
 
     if move_data and len(move_data) > 8:
         if sizes and len(sizes) > 0:
-            result.nodes = _parse_trees_with_sizes(move_data, sizes, offsets_array)
+            result.nodes = _parse_trees_with_sizes(move_data, sizes, offsets_array, resource_path_table)
         else:
             result.nodes = _parse_all_trees(move_data)
 
     return result
 
 
-def _parse_trees_with_sizes(move_data, sizes, offsets_array=None):
+def _parse_trees_with_sizes(move_data, sizes, offsets_array=None, resource_path_table=None):
     """Parse trees using PerMoveResourceInfo sizes for correct positioning.
 
     Args:
         move_data: raw animation tree bytes
         sizes: tree sizes from PerMoveResourceInfo
         offsets_array: byte positions array from ANIMPARAM_FIXUPS (optional)
+        resource_path_table: CRC32 low16 → byte position lookup (optional)
     """
     nodes = []
     pos = 0
